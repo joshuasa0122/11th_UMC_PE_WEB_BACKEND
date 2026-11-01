@@ -5,6 +5,8 @@ import com.umc.movie.dto.MemberResponse;
 import com.umc.movie.dto.NicknameCheckResponse;
 import com.umc.movie.dto.SignUpRequest;
 import com.umc.movie.entity.Member;
+import com.umc.movie.exception.CustomException;
+import com.umc.movie.exception.ErrorCode;
 import com.umc.movie.repository.MemberRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -33,10 +35,10 @@ public class MemberService {
     @Transactional
     public MemberResponse signUp(SignUpRequest request) {
         if (memberRepository.existsByEmail(request.email())) {
-            throw new IllegalArgumentException("이미 사용 중인 이메일입니다.");
+            throw new CustomException(ErrorCode.MEMBER_EMAIL_DUPLICATED);
         }
         if (memberRepository.existsByNickname(request.nickname())) {
-            throw new IllegalArgumentException("이미 사용 중인 닉네임입니다.");
+            throw new CustomException(ErrorCode.MEMBER_NICKNAME_DUPLICATED);
         }
 
         Member member = Member.builder()

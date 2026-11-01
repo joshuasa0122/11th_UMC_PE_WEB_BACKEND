@@ -5,6 +5,8 @@ import com.umc.movie.dto.RatingResponse;
 import com.umc.movie.dto.UpdateRatingRequest;
 import com.umc.movie.entity.Member;
 import com.umc.movie.entity.Rating;
+import com.umc.movie.exception.CustomException;
+import com.umc.movie.exception.ErrorCode;
 import com.umc.movie.repository.RatingRepository;
 import com.umc.movie.repository.MemberRepository;
 import lombok.RequiredArgsConstructor;
@@ -42,7 +44,7 @@ public class RatingService {
 
         // (member_id, movie_id) 복합 UNIQUE 제약이 DB에서도 막아주지만, 정한 메시지로 응답하려고 먼저 확인해요.
         if (ratingRepository.existsByMember_MemberIdAndMovieId(memberId, request.movieId())) {
-            throw new IllegalArgumentException("이미 이 영화에 평점을 남기셨습니다.");
+            throw new CustomException(ErrorCode.RATING_DUPLICATED);
         }
 
         Rating rating = Rating.builder()
