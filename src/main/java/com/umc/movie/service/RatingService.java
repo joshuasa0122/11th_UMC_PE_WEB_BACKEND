@@ -1,6 +1,12 @@
 package com.umc.movie.service;
 
+import com.umc.movie.dto.CreateRatingRequest;
 import com.umc.movie.dto.RatingResponse;
+import com.umc.movie.dto.UpdateRatingRequest;
+import com.umc.movie.entity.Member;
+import com.umc.movie.entity.Rating;
+import com.umc.movie.exception.CustomException;
+import com.umc.movie.exception.ErrorCode;
 import com.umc.movie.repository.RatingRepository;
 import com.umc.movie.repository.MemberRepository;
 import lombok.RequiredArgsConstructor;
@@ -29,5 +35,50 @@ public class RatingService {
         return ratingRepository.findByMember_MemberIdOrderByRatingIdDesc(memberId).stream()
                 .map(RatingResponse::from)
                 .toList();
+    }
+
+    @Transactional
+    public Long create(Long memberId, CreateRatingRequest request) {
+        Member member = memberRepository.findById(memberId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "존재하지 않는 유저입니다."));
+
+        // (member_id, movie_id) 복합 UNIQUE 제약이 DB에서도 막아주지만, 정한 메시지로 응답하려고 먼저 확인해요.
+        if (ratingRepository.existsByMember_MemberIdAndMovieId(memberId, request.movieId())) {
+            throw new CustomException(ErrorCode.RATING_DUPLICATED);
+        }
+
+        Rating rating = Rating.builder()
+                .member(member)
+                .movieId(request.movieId())
+                .score(request.score())
+                .comment(request.comment())
+                .build();
+
+        return ratingRepository.save(rating).getRatingId();
+    }
+
+    @Transactional
+    public void update(Long ratingId, Long memberId, UpdateRatingRequest request) {
+        Rating rating = findOwnedRating(ratingId, memberId);
+        rating.update(request.score(), request.comment());
+        ratingRepository.save(rating);
+    }
+
+    @Transactional
+    public void delete(Long ratingId, Long memberId) {
+        Rating rating = findOwnedRating(ratingId, memberId);
+        ratingRepository.delete(rating);
+    }
+
+    // 평점이 없으면 404, 요청자의 평점이 아니면 403이에요. 수정과 삭제가 같은 검사를 해서 묶었어요.
+    private Rating findOwnedRating(Long ratingId, Long memberId) {
+        Rating rating = ratingRepository.findById(ratingId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "존재하지 않는 평점입니다."));
+
+        if (!rating.getMember().getMemberId().equals(memberId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "본인이 작성한 평점만 수정하거나 삭제할 수 있습니다.");
+        }
+
+        return rating;
     }
 }
