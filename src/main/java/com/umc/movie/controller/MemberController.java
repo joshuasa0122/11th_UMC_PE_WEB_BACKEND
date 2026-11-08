@@ -7,7 +7,7 @@ import com.umc.movie.dto.MemberResponse;
 import com.umc.movie.dto.NicknameCheckResponse;
 import com.umc.movie.dto.MemberUpdateRequest;
 import com.umc.movie.dto.SignUpRequest;
-import com.umc.movie.interceptor.AuthInterceptor;
+import com.umc.movie.resolver.LoginMember;
 import com.umc.movie.service.MemberService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -21,15 +21,15 @@ public class MemberController {
 
     private final MemberService memberService;
 
-    // 인터셉터가 request.setAttribute("memberId", ...)로 담아둔 값을 꺼냅니다
+    // @LoginMember: 인터셉터가 토큰에서 꺼낸 로그인 회원의 memberId
     @GetMapping("/me")
-    public ResponseEntity<ApiResponse<MemberInfoResponse>> getMyInfo(@RequestAttribute(AuthInterceptor.MEMBER_ID) Long memberId) {
+    public ResponseEntity<ApiResponse<MemberInfoResponse>> getMyInfo(@LoginMember Long memberId) {
         return ResponseEntity.ok(ApiResponse.ok("회원 정보를 조회했습니다.", memberService.getMyInfo(memberId)));
     }
 
     @PatchMapping("/me")
     public ResponseEntity<ApiResponse<MemberInfoResponse>> updateMyInfo(
-            @RequestAttribute(AuthInterceptor.MEMBER_ID) Long memberId,
+            @LoginMember Long memberId,
             @Valid @RequestBody MemberUpdateRequest request
     ) {
         return ResponseEntity.ok(ApiResponse.ok("회원 정보를 수정했습니다.", memberService.updateMyInfo(memberId, request)));

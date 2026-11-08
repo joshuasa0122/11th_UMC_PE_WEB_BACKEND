@@ -4,7 +4,7 @@ import com.umc.movie.dto.ApiResponse;
 import com.umc.movie.dto.CreateRatingRequest;
 import com.umc.movie.dto.RatingResponse;
 import com.umc.movie.dto.UpdateRatingRequest;
-import com.umc.movie.interceptor.AuthInterceptor;
+import com.umc.movie.resolver.LoginMember;
 import com.umc.movie.service.RatingService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -25,10 +25,10 @@ public class RatingController {
         return ratingService.getRatingsByMember(memberId);
     }
 
-    // memberId는 URL이 아니라 인터셉터가 토큰에서 꺼내 담아둔 값을 써요.
+    // memberId는 URL이 아니라 @LoginMember로 토큰의 로그인 회원 값을 받아요.
     @PostMapping("/ratings")
     public ResponseEntity<ApiResponse<RatingResponse>> create(
-            @RequestAttribute(AuthInterceptor.MEMBER_ID) Long memberId,
+            @LoginMember Long memberId,
             @Valid @RequestBody CreateRatingRequest request
     ) {
         RatingResponse response = ratingService.create(memberId, request);
@@ -37,7 +37,7 @@ public class RatingController {
 
     @PatchMapping("/ratings/{ratingId}")
     public ResponseEntity<ApiResponse<RatingResponse>> update(
-            @RequestAttribute(AuthInterceptor.MEMBER_ID) Long memberId,
+            @LoginMember Long memberId,
             @PathVariable Long ratingId,
             @Valid @RequestBody UpdateRatingRequest request
     ) {
@@ -48,7 +48,7 @@ public class RatingController {
     // 204는 본문을 보낼 수 없어서 공통 응답 형식을 지키려고 200 + result null로 응답해요.
     @DeleteMapping("/ratings/{ratingId}")
     public ResponseEntity<ApiResponse<Void>> delete(
-            @RequestAttribute(AuthInterceptor.MEMBER_ID) Long memberId,
+            @LoginMember Long memberId,
             @PathVariable Long ratingId
     ) {
         ratingService.delete(memberId, ratingId);
