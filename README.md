@@ -1,5 +1,66 @@
 # UMC 영화 평점 서비스 백엔드 (Spring Boot)
 
+## 7주차 — 로그인 · JWT 인증 · 소유권 검증
+
+### 실행 환경변수
+
+`application.yaml`은 `${JWT_SECRET}`, `${JWT_ACCESS_EXPIRATION}`만 참조하고 값은 실행 환경에 넣습니다. 비밀키는 저장소에 올리지 않습니다.
+
+```bash
+JWT_SECRET=<32자 이상 비밀키> JWT_ACCESS_EXPIRATION=3600 ./gradlew bootRun
+```
+
+### API 명세
+
+| 기능 | Method | 경로 | 헤더 | 요청 본문 | 성공 |
+| --- | --- | --- | --- | --- | --- |
+| 로그인 | POST | `/auth/login` | - | `{ email, password }` | 200 `result`: nickname·accessToken |
+| 내 정보 조회 | GET | `/members/me` | `Authorization: Bearer {token}` | 없음 | 200 `result`: email·nickname·createdAt |
+| 내 정보 수정 | PATCH | `/members/me` | `Authorization: Bearer {token}` | `{ nickname }` | 200 내 정보 조회와 동일 |
+| 평점 등록 | POST | `/ratings` | `Authorization: Bearer {token}` | `{ movieId, score, comment? }` | 201 `result`: RatingResponse |
+| 평점 수정 | PATCH | `/ratings/{ratingId}` | `Authorization: Bearer {token}` | `{ score, comment? }` | 200 `result`: RatingResponse |
+| 평점 삭제 | DELETE | `/ratings/{ratingId}` | `Authorization: Bearer {token}` | 없음 | 200 `result`: null |
+
+회원가입, 닉네임·이메일 중복 체크, 유저별 평점 조회(`GET /members/{memberId}/ratings`)는 토큰 없이 호출합니다.
+
+### 실패 코드
+
+| 상황 | 상태 | code |
+| --- | --- | --- |
+| 이메일 없음 / 비밀번호 틀림 (구분하지 않음) | 401 | `AUTH401_1` |
+| Authorization 헤더 없음 | 401 | `AUTH401_2` |
+| 위조된 토큰 | 401 | `AUTH401_3` |
+| 만료된 토큰 | 401 | `AUTH401_4` |
+| 회원 없음 | 404 | `MEMBER404_1` |
+| 수정할 닉네임을 다른 회원이 사용 중 | 409 | `MEMBER409_1` |
+| 평점 없음 | 404 | `RATING404_1` |
+| 남의 평점 수정·삭제 | 403 | `RATING403_1` |
+| 같은 영화에 평점 중복 | 409 | `RATING409_1` (6주차 `RATING4091`에서 변경, DB 제약 위반도 같은 code) |
+
+### 핵심 코드
+
+- [JwtUtil](https://github.com/joshuasa0122/11th_UMC_PE_WEB_BACKEND/blob/week7-josh/src/main/java/com/umc/movie/util/JwtUtil.java) — 토큰 발급, 서명·만료 검증 후 memberId 추출
+- [AuthInterceptor](https://github.com/joshuasa0122/11th_UMC_PE_WEB_BACKEND/blob/week7-josh/src/main/java/com/umc/movie/interceptor/AuthInterceptor.java) · [WebConfig](https://github.com/joshuasa0122/11th_UMC_PE_WEB_BACKEND/blob/week7-josh/src/main/java/com/umc/movie/config/WebConfig.java) — 전부 잠그고 공개 경로만 열어 컨트롤러 앞에서 토큰 검증
+- [AuthService](https://github.com/joshuasa0122/11th_UMC_PE_WEB_BACKEND/blob/week7-josh/src/main/java/com/umc/movie/service/AuthService.java) — `passwordEncoder.matches()`로 비교, 실패 원인을 하나의 응답으로 통일
+- [RatingService.findOwnedRating](https://github.com/joshuasa0122/11th_UMC_PE_WEB_BACKEND/blob/week7-josh/src/main/java/com/umc/movie/service/RatingService.java) — 404(없음) 확인 후 403(남의 것) 확인
+
+### 확인 결과 (curl, 로컬 MySQL)
+
+A(`a@umc.com`), B(`b@umc.com`) 두 회원으로 시나리오를 확인했습니다.
+
+| 요청 | 결과 |
+| --- | --- |
+| 로그인 성공 | 200, 토큰 header `{"alg":"HS384"}`, payload `sub`·`email`·`iat`·`exp` |
+| 비밀번호 틀림 / 없는 이메일 | 둘 다 401 `AUTH401_1`, 같은 메시지 |
+| `/members/me` 헤더 없음 / 토큰 A / payload 한 글자 변경 / 만료 토큰 | 401 `AUTH401_2` / 200 / 401 `AUTH401_3` / 401 `AUTH401_4` |
+| 닉네임을 자기 닉네임 그대로 / B 닉네임 / 1자 | 200 / 409 `MEMBER409_1` / 400 `COMMON4001` |
+| 토큰 A로 평점 등록 → 중복 등록 → 본인 수정 | 201 → 409 `RATING409_1` → 200 |
+| 토큰 B로 A의 평점 수정 | 403 `RATING403_1` |
+| 토큰 없이 수정 / 없는 평점 삭제 / 본인 삭제 | 401 `AUTH401_2` / 404 `RATING404_1` / 200 |
+| `TOKEN=... ./scripts/race.sh /ratings ...` 20개 동시 | 201 1개, 409 `RATING409_1` 19개, DB에는 1행 |
+
+---
+
 ## 6주차 — 회원가입 · 평점 쓰기 API
 
 ### API 명세
