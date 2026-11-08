@@ -58,7 +58,8 @@ public class RatingService {
     public RatingResponse update(Long memberId, Long ratingId, UpdateRatingRequest request) {
         Rating rating = findOwnedRating(memberId, ratingId);
         rating.update(request.score(), request.comment());
-        ratingRepository.save(rating);
+        // @UpdateTimestamp는 flush 시점에 채워져서, 바로 flush해야 응답에 바뀐 updatedAt이 담겨요.
+        ratingRepository.saveAndFlush(rating);
         return RatingResponse.from(rating);
     }
 
