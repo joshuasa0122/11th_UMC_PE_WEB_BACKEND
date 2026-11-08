@@ -59,6 +59,35 @@ A(`a@umc.com`), B(`b@umc.com`) 두 회원으로 시나리오를 확인했습니�
 | 토큰 없이 수정 / 없는 평점 삭제 / 본인 삭제 | 401 `AUTH401_2` / 404 `RATING404_1` / 200 |
 | `TOKEN=... ./scripts/race.sh /ratings ...` 20개 동시 | 201 1개, 409 `RATING409_1` 19개, DB에는 1행 |
 
+### 선택 미션 1 — 토큰 만료 직접 겪어보기
+
+`JWT_ACCESS_EXPIRATION=60`으로 재시작한 뒤 같은 토큰으로 `GET /members/me`를 호출했습니다.
+
+| 시각 | 경과 | 결과 |
+| --- | --- | --- |
+| 16:13:13 | 발급 (`exp` 16:14:13) | 200 |
+| 16:14:16 | 63초 | **200** (`exp`는 지났지만 통과) |
+| 16:15:11 | 118초 | **200** |
+| 16:15:18 | 125초 | 401 `AUTH401_4` |
+
+`exp`가 지나도 1분 동안 통과한 이유는 `JwtUtil`의 `clockSkewSeconds(60)` 때문입니다. 서버·클라이언트 시계 오차를 60초까지 허용하므로, 실제 만료 판정은 `exp + 60초`에 일어납니다. 그래서 유효시간을 60초로 두면 **2분이 지나야** `AUTH401_4`가 나옵니다. 헤더가 없을 때는 같은 401이어도 `AUTH401_2`라서 code만 보고 원인을 구분할 수 있습니다.
+
+### 선택 미션 2 — `@LoginMember`로 memberId 꺼내기
+
+- [LoginMember](https://github.com/joshuasa0122/11th_UMC_PE_WEB_BACKEND/blob/week7-josh/src/main/java/com/umc/movie/resolver/LoginMember.java): 파라미터용 어노테이션
+- [LoginMemberArgumentResolver](https://github.com/joshuasa0122/11th_UMC_PE_WEB_BACKEND/blob/week7-josh/src/main/java/com/umc/movie/resolver/LoginMemberArgumentResolver.java): `@LoginMember Long` 파라미터에 인터셉터가 담아둔 memberId를 넣습니다. 값이 없으면(공개 경로에 잘못 붙인 경우) null 대신 401 `AUTH401_2`를 던집니다.
+- [WebConfig](https://github.com/joshuasa0122/11th_UMC_PE_WEB_BACKEND/blob/week7-josh/src/main/java/com/umc/movie/config/WebConfig.java): `addArgumentResolvers`에 등록
+
+```java
+// 적용 전
+public ResponseEntity<...> create(@RequestAttribute(AuthInterceptor.MEMBER_ID) Long memberId, ...)
+
+// 적용 후
+public ResponseEntity<...> create(@LoginMember Long memberId, ...)
+```
+
+컨트롤러에서 `@RequestAttribute`와 `AuthInterceptor.MEMBER_ID`(문자열 `"memberId"`)를 쓰는 곳이 없어졌습니다. 적용 후 내 정보 조회·수정, 평점 등록·수정(403 포함)·삭제를 다시 호출해 응답이 이전과 같은 것을 확인했습니다.
+
 ---
 
 ## 6주차 — 회원가입 · 평점 쓰기 API
