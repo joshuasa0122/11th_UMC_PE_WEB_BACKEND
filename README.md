@@ -1,5 +1,95 @@
 # UMC 영화 평점 서비스 백엔드 (Spring Boot)
 
+## 7주차 — 로그인 · JWT 인증 · 소유권 검증
+
+### 실행 환경변수
+
+`application.yaml`은 `${JWT_SECRET}`, `${JWT_ACCESS_EXPIRATION}`만 참조하고 값은 실행 환경에 넣습니다. 비밀키는 저장소에 올리지 않습니다.
+
+```bash
+JWT_SECRET=<32자 이상 비밀키> JWT_ACCESS_EXPIRATION=3600 ./gradlew bootRun
+```
+
+### API 명세
+
+| 기능 | Method | 경로 | 헤더 | 요청 본문 | 성공 |
+| --- | --- | --- | --- | --- | --- |
+| 로그인 | POST | `/auth/login` | - | `{ email, password }` | 200 `result`: nickname·accessToken |
+| 내 정보 조회 | GET | `/members/me` | `Authorization: Bearer {token}` | 없음 | 200 `result`: email·nickname·createdAt |
+| 내 정보 수정 | PATCH | `/members/me` | `Authorization: Bearer {token}` | `{ nickname }` | 200 내 정보 조회와 동일 |
+| 평점 등록 | POST | `/ratings` | `Authorization: Bearer {token}` | `{ movieId, score, comment? }` | 201 `result`: RatingResponse |
+| 평점 수정 | PATCH | `/ratings/{ratingId}` | `Authorization: Bearer {token}` | `{ score, comment? }` | 200 `result`: RatingResponse |
+| 평점 삭제 | DELETE | `/ratings/{ratingId}` | `Authorization: Bearer {token}` | 없음 | 200 `result`: null |
+
+회원가입, 닉네임·이메일 중복 체크, 유저별 평점 조회(`GET /members/{memberId}/ratings`)는 토큰 없이 호출합니다.
+
+### 실패 코드
+
+| 상황 | 상태 | code |
+| --- | --- | --- |
+| 이메일 없음 / 비밀번호 틀림 (구분하지 않음) | 401 | `AUTH401_1` |
+| Authorization 헤더 없음 | 401 | `AUTH401_2` |
+| 위조된 토큰 | 401 | `AUTH401_3` |
+| 만료된 토큰 | 401 | `AUTH401_4` |
+| 회원 없음 | 404 | `MEMBER404_1` |
+| 수정할 닉네임을 다른 회원이 사용 중 | 409 | `MEMBER409_1` |
+| 평점 없음 | 404 | `RATING404_1` |
+| 남의 평점 수정·삭제 | 403 | `RATING403_1` |
+| 같은 영화에 평점 중복 | 409 | `RATING409_1` (6주차 `RATING4091`에서 변경, DB 제약 위반도 같은 code) |
+
+### 핵심 코드
+
+- [JwtUtil](https://github.com/joshuasa0122/11th_UMC_PE_WEB_BACKEND/blob/week7-josh/src/main/java/com/umc/movie/util/JwtUtil.java) — 토큰 발급, 서명·만료 검증 후 memberId 추출
+- [AuthInterceptor](https://github.com/joshuasa0122/11th_UMC_PE_WEB_BACKEND/blob/week7-josh/src/main/java/com/umc/movie/interceptor/AuthInterceptor.java) · [WebConfig](https://github.com/joshuasa0122/11th_UMC_PE_WEB_BACKEND/blob/week7-josh/src/main/java/com/umc/movie/config/WebConfig.java) — 전부 잠그고 공개 경로만 열어 컨트롤러 앞에서 토큰 검증
+- [AuthService](https://github.com/joshuasa0122/11th_UMC_PE_WEB_BACKEND/blob/week7-josh/src/main/java/com/umc/movie/service/AuthService.java) — `passwordEncoder.matches()`로 비교, 실패 원인을 하나의 응답으로 통일
+- [RatingService.findOwnedRating](https://github.com/joshuasa0122/11th_UMC_PE_WEB_BACKEND/blob/week7-josh/src/main/java/com/umc/movie/service/RatingService.java) — 404(없음) 확인 후 403(남의 것) 확인
+
+### 확인 결과 (curl, 로컬 MySQL)
+
+A(`a@umc.com`), B(`b@umc.com`) 두 회원으로 시나리오를 확인했습니다.
+
+| 요청 | 결과 |
+| --- | --- |
+| 로그인 성공 | 200, 토큰 header `{"alg":"HS384"}`, payload `sub`·`email`·`iat`·`exp` |
+| 비밀번호 틀림 / 없는 이메일 | 둘 다 401 `AUTH401_1`, 같은 메시지 |
+| `/members/me` 헤더 없음 / 토큰 A / payload 한 글자 변경 / 만료 토큰 | 401 `AUTH401_2` / 200 / 401 `AUTH401_3` / 401 `AUTH401_4` |
+| 닉네임을 자기 닉네임 그대로 / B 닉네임 / 1자 | 200 / 409 `MEMBER409_1` / 400 `COMMON4001` |
+| 토큰 A로 평점 등록 → 중복 등록 → 본인 수정 | 201 → 409 `RATING409_1` → 200 |
+| 토큰 B로 A의 평점 수정 | 403 `RATING403_1` |
+| 토큰 없이 수정 / 없는 평점 삭제 / 본인 삭제 | 401 `AUTH401_2` / 404 `RATING404_1` / 200 |
+| `TOKEN=... ./scripts/race.sh /ratings ...` 20개 동시 | 201 1개, 409 `RATING409_1` 19개, DB에는 1행 |
+
+### 선택 미션 1 — 토큰 만료 직접 겪어보기
+
+`JWT_ACCESS_EXPIRATION=60`으로 재시작한 뒤 같은 토큰으로 `GET /members/me`를 호출했습니다.
+
+| 시각 | 경과 | 결과 |
+| --- | --- | --- |
+| 16:13:13 | 발급 (`exp` 16:14:13) | 200 |
+| 16:14:16 | 63초 | **200** (`exp`는 지났지만 통과) |
+| 16:15:11 | 118초 | **200** |
+| 16:15:18 | 125초 | 401 `AUTH401_4` |
+
+`exp`가 지나도 1분 동안 통과한 이유는 `JwtUtil`의 `clockSkewSeconds(60)` 때문입니다. 서버·클라이언트 시계 오차를 60초까지 허용하므로, 실제 만료 판정은 `exp + 60초`에 일어납니다. 그래서 유효시간을 60초로 두면 **2분이 지나야** `AUTH401_4`가 나옵니다. 헤더가 없을 때는 같은 401이어도 `AUTH401_2`라서 code만 보고 원인을 구분할 수 있습니다.
+
+### 선택 미션 2 — `@LoginMember`로 memberId 꺼내기
+
+- [LoginMember](https://github.com/joshuasa0122/11th_UMC_PE_WEB_BACKEND/blob/week7-josh/src/main/java/com/umc/movie/resolver/LoginMember.java): 파라미터용 어노테이션
+- [LoginMemberArgumentResolver](https://github.com/joshuasa0122/11th_UMC_PE_WEB_BACKEND/blob/week7-josh/src/main/java/com/umc/movie/resolver/LoginMemberArgumentResolver.java): `@LoginMember Long` 파라미터에 인터셉터가 담아둔 memberId를 넣습니다. 값이 없으면(공개 경로에 잘못 붙인 경우) null 대신 401 `AUTH401_2`를 던집니다.
+- [WebConfig](https://github.com/joshuasa0122/11th_UMC_PE_WEB_BACKEND/blob/week7-josh/src/main/java/com/umc/movie/config/WebConfig.java): `addArgumentResolvers`에 등록
+
+```java
+// 적용 전
+public ResponseEntity<...> create(@RequestAttribute(AuthInterceptor.MEMBER_ID) Long memberId, ...)
+
+// 적용 후
+public ResponseEntity<...> create(@LoginMember Long memberId, ...)
+```
+
+컨트롤러에서 `@RequestAttribute`와 `AuthInterceptor.MEMBER_ID`(문자열 `"memberId"`)를 쓰는 곳이 없어졌습니다. 적용 후 내 정보 조회·수정, 평점 등록·수정(403 포함)·삭제를 다시 호출해 응답이 이전과 같은 것을 확인했습니다.
+
+---
+
 ## 6주차 — 회원가입 · 평점 쓰기 API
 
 ### API 명세
