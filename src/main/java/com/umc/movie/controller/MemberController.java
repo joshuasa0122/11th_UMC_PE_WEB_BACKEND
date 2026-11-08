@@ -2,9 +2,12 @@ package com.umc.movie.controller;
 
 import com.umc.movie.dto.ApiResponse;
 import com.umc.movie.dto.EmailCheckResponse;
+import com.umc.movie.dto.MemberInfoResponse;
 import com.umc.movie.dto.MemberResponse;
 import com.umc.movie.dto.NicknameCheckResponse;
+import com.umc.movie.dto.MemberUpdateRequest;
 import com.umc.movie.dto.SignUpRequest;
+import com.umc.movie.interceptor.AuthInterceptor;
 import com.umc.movie.service.MemberService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -17,6 +20,20 @@ import org.springframework.web.bind.annotation.*;
 public class MemberController {
 
     private final MemberService memberService;
+
+    // 인터셉터가 request.setAttribute("memberId", ...)로 담아둔 값을 꺼냅니다
+    @GetMapping("/me")
+    public ResponseEntity<ApiResponse<MemberInfoResponse>> getMyInfo(@RequestAttribute(AuthInterceptor.MEMBER_ID) Long memberId) {
+        return ResponseEntity.ok(ApiResponse.ok("회원 정보를 조회했습니다.", memberService.getMyInfo(memberId)));
+    }
+
+    @PatchMapping("/me")
+    public ResponseEntity<ApiResponse<MemberInfoResponse>> updateMyInfo(
+            @RequestAttribute(AuthInterceptor.MEMBER_ID) Long memberId,
+            @Valid @RequestBody MemberUpdateRequest request
+    ) {
+        return ResponseEntity.ok(ApiResponse.ok("회원 정보를 수정했습니다.", memberService.updateMyInfo(memberId, request)));
+    }
 
     @GetMapping("/nickname/{nickname}")
     public NicknameCheckResponse checkNickname(@PathVariable String nickname) {
