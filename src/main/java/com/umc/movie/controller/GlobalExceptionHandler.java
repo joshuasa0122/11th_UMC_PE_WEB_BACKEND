@@ -1,6 +1,7 @@
 package com.umc.movie.controller;
 
 import com.umc.movie.dto.ApiResponse;
+import com.umc.movie.exception.ApiException;
 import com.umc.movie.exception.CustomException;
 import com.umc.movie.exception.ErrorCode;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -39,6 +40,13 @@ public class GlobalExceptionHandler {
         int status = exception.getStatusCode().value();
         return ResponseEntity.status(status)
                 .body(ApiResponse.failure("COMMON" + status, exception.getReason()));
+    }
+
+    // 우리가 직접 던진 예외입니다. 예외가 들고 온 상태 코드와 코드 문자열을 그대로 씁니다.
+    @ExceptionHandler(ApiException.class)
+    public ResponseEntity<ApiResponse<Void>> handleApiException(ApiException exception) {
+        return ResponseEntity.status(exception.getStatus())
+                .body(ApiResponse.failure(exception.getCode(), exception.getMessage()));
     }
 
     private ResponseEntity<ApiResponse<Void>> toResponse(ErrorCode errorCode) {
