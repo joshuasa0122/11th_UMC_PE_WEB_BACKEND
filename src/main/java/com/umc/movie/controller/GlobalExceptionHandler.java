@@ -32,6 +32,7 @@ public class GlobalExceptionHandler {
         if (message.contains("'member.email'")) return toResponse(ErrorCode.MEMBER_EMAIL_DUPLICATED);
         if (message.contains("'member.nickname'")) return toResponse(ErrorCode.MEMBER_NICKNAME_DUPLICATED);
         if (message.contains("'rating.member_id'")) return toResponse(ErrorCode.RATING_DUPLICATED);
+        if (message.contains("'favorite.uk_favorite_member_movie'")) return toResponse(ErrorCode.FAVORITE_DUPLICATED);
         return ResponseEntity.status(409).body(ApiResponse.failure("COMMON4091", "이미 존재하는 데이터입니다."));
     }
 
