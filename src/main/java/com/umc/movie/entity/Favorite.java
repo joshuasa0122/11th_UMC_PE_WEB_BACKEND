@@ -2,6 +2,7 @@ package com.umc.movie.entity;
 
 import jakarta.persistence.*;
 import lombok.AccessLevel;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
@@ -16,13 +17,16 @@ public class Favorite extends BaseTimeEntity {
     @Column(name = "favorite_id")
     private Long favoriteId;
 
+    // 즐겨찾기의 주인은 로그인한 회원입니다.
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "member_id", nullable = false)
     private Member member;
 
+    // TMDB의 영화 ID를 그대로 저장합니다. 우리 DB의 외래 키는 아닙니다.
     @Column(name = "movie_id", nullable = false)
     private Long movieId;
 
+    @Builder
     public Favorite(Member member, Long movieId) {
         this.member = member;
         this.movieId = movieId;
