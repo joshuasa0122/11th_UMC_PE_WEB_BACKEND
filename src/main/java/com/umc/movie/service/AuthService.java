@@ -32,6 +32,6 @@ public class AuthService {
         }
 
         String accessToken = jwtUtil.createAccessToken(member.getMemberId(), member.getEmail());
-        return new LoginResponse(member.getNickname(), accessToken);
+        return new LoginResponse(member.getMemberId(), member.getNickname(), accessToken);
     }
 }

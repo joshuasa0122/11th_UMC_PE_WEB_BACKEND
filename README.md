@@ -1,5 +1,62 @@
 # UMC 영화 평점 서비스 백엔드 (Spring Boot)
 
+## 8주차 — 즐겨찾기 · 영화 기록 트랜잭션
+
+### 실행 전 준비
+
+`ddl-auto: validate`라서 `favorite` 테이블을 먼저 만들어야 서버가 뜹니다.
+
+```bash
+mysql -h127.0.0.1 -P3307 -uroot -p umc_movie < scripts/favorite.sql
+```
+
+### API 명세
+
+모두 `Authorization: Bearer {token}`이 필요합니다. `WebConfig`의 공개 경로 목록에는 추가하지 않았습니다. memberId는 7주차 선택 미션에서 만든 `@LoginMember`로 받습니다.
+
+| 기능 | Method | 경로 | 요청 본문 | 성공 |
+| --- | --- | --- | --- | --- |
+| 즐겨찾기 등록 | POST | `/favorites` | `{ movieId }` | 201 `result`: favoriteId·movieId·createdAt |
+| 내 즐겨찾기 목록 | GET | `/favorites` | 없음 | 200 `result`: 배열 (최신순, 없으면 `[]`) |
+| 즐겨찾기 여부 | GET | `/favorites/{movieId}` | 없음 | 200 `result`: `{ isFavorite }` |
+| 즐겨찾기 해제 | DELETE | `/favorites/{movieId}` | 없음 | 200 `result`: null |
+| 영화 기록 (평점 + 즐겨찾기) | POST | `/movie-records` | `{ movieId, score, comment?, addToFavorites }` | 201 `result`: `{ rating, favorite }` (`addToFavorites=false`면 favorite null) |
+
+로그인 응답에 `memberId`를 추가했습니다. 프론트가 공개 API `GET /members/{memberId}/ratings`를 호출할 때 필요합니다.
+
+### 실패 코드
+
+| 상황 | 상태 | code |
+| --- | --- | --- |
+| 토큰 없이 호출 | 401 | `AUTH401_2` |
+| 같은 영화 즐겨찾기 중복 | 409 | `FAVORITE409_1` (DB `uk_favorite_member_movie` 위반도 같은 code) |
+| 즐겨찾기하지 않은 영화 해제 | 404 | `FAVORITE404_1` |
+| `movieId` 0 이하 / `addToFavorites` 누락 | 400 | `COMMON4001` |
+| 영화 기록: 이미 평점 있음 | 409 | `RATING409_1` |
+
+### 핵심 코드
+
+- `FavoriteService.create`: `existsBy...`로 먼저 검사해 `FAVORITE409_1`을 응답합니다. 동시 요청은 DB UNIQUE 제약이 막고, `GlobalExceptionHandler`가 같은 code로 바꿔 응답합니다.
+- `MovieRecordService.create`: `@Transactional` 메서드 하나에서 `rating`과 `favorite`를 저장합니다. `RatingService`와 `FavoriteService`를 연달아 부르면 저장이 두 트랜잭션으로 나뉠 수 있어서 전용 Service로 묶었습니다.
+- 즐겨찾기: [Favorite](https://github.com/joshuasa0122/11th_UMC_PE_WEB_BACKEND/blob/week8-josh/src/main/java/com/umc/movie/entity/Favorite.java) · [FavoriteRepository](https://github.com/joshuasa0122/11th_UMC_PE_WEB_BACKEND/blob/week8-josh/src/main/java/com/umc/movie/repository/FavoriteRepository.java) · [FavoriteService](https://github.com/joshuasa0122/11th_UMC_PE_WEB_BACKEND/blob/week8-josh/src/main/java/com/umc/movie/service/FavoriteService.java) · [FavoriteController](https://github.com/joshuasa0122/11th_UMC_PE_WEB_BACKEND/blob/week8-josh/src/main/java/com/umc/movie/controller/FavoriteController.java)
+- 영화 기록: [MovieRecordService](https://github.com/joshuasa0122/11th_UMC_PE_WEB_BACKEND/blob/week8-josh/src/main/java/com/umc/movie/service/MovieRecordService.java) · [MovieRecordController](https://github.com/joshuasa0122/11th_UMC_PE_WEB_BACKEND/blob/week8-josh/src/main/java/com/umc/movie/controller/MovieRecordController.java)
+
+### 확인 결과 (curl, 로컬 MySQL)
+
+| 요청 | 결과 |
+| --- | --- |
+| `POST /favorites` 550 → 같은 요청 | 201 → 409 `FAVORITE409_1` |
+| `GET /favorites` → `GET /favorites/550` | 200 배열 1개 → 200 `isFavorite: true` |
+| `DELETE /favorites/550` → `GET /favorites/550` → `GET /favorites` | 200 `result: null` → `isFavorite: false` → 200 `[]` |
+| `POST /movie-records` 238 (`addToFavorites: true`) | 201, `rating`·`favorite` 모두 채워짐 (DB rating 1, favorite 1) |
+| 같은 요청 다시 | 409 `RATING409_1`, DB 행 수 변화 없음 |
+| `addToFavorites: false` | 201, `favorite: null`, rating만 1행 추가 |
+| 토큰 없음 / 없는 즐겨찾기 해제 / `movieId: 0` | 401 `AUTH401_2` / 404 `FAVORITE404_1` / 400 |
+
+**rollback 확인**: 위 409는 저장 전 사전 검사에서 막힌 경우라 rollback이 일어나지 않습니다. 그래서 영화 40개에 대해 `POST /favorites`와 `POST /movie-records`(`addToFavorites: true`)를 동시에 보냈습니다. 서버 로그에서 `favorite.uk_favorite_member_movie` 위반이 29건 나왔습니다. `/movie-records`는 201 9개, `FAVORITE409_1` 31개였고, DB의 rating은 성공한 9행뿐이었습니다. 즐겨찾기 저장이 DB 제약에 막힌 요청은 앞서 저장한 평점까지 함께 rollback된 것입니다.
+
+---
+
 ## 7주차 — 로그인 · JWT 인증 · 소유권 검증
 
 ### 실행 환경변수
