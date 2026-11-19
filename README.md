@@ -38,6 +38,8 @@ mysql -h127.0.0.1 -P3307 -uroot -p umc_movie < scripts/favorite.sql
 
 - `FavoriteService.create`: `existsBy...`로 먼저 검사해 `FAVORITE409_1`을 응답합니다. 동시 요청은 DB UNIQUE 제약이 막고, `GlobalExceptionHandler`가 같은 code로 바꿔 응답합니다.
 - `MovieRecordService.create`: `@Transactional` 메서드 하나에서 `rating`과 `favorite`를 저장합니다. `RatingService`와 `FavoriteService`를 연달아 부르면 저장이 두 트랜잭션으로 나뉠 수 있어서 전용 Service로 묶었습니다.
+- 즐겨찾기: [Favorite](https://github.com/joshuasa0122/11th_UMC_PE_WEB_BACKEND/blob/week8-josh/src/main/java/com/umc/movie/entity/Favorite.java) · [FavoriteRepository](https://github.com/joshuasa0122/11th_UMC_PE_WEB_BACKEND/blob/week8-josh/src/main/java/com/umc/movie/repository/FavoriteRepository.java) · [FavoriteService](https://github.com/joshuasa0122/11th_UMC_PE_WEB_BACKEND/blob/week8-josh/src/main/java/com/umc/movie/service/FavoriteService.java) · [FavoriteController](https://github.com/joshuasa0122/11th_UMC_PE_WEB_BACKEND/blob/week8-josh/src/main/java/com/umc/movie/controller/FavoriteController.java)
+- 영화 기록: [MovieRecordService](https://github.com/joshuasa0122/11th_UMC_PE_WEB_BACKEND/blob/week8-josh/src/main/java/com/umc/movie/service/MovieRecordService.java) · [MovieRecordController](https://github.com/joshuasa0122/11th_UMC_PE_WEB_BACKEND/blob/week8-josh/src/main/java/com/umc/movie/controller/MovieRecordController.java)
 
 ### 확인 결과 (curl, 로컬 MySQL)
 
