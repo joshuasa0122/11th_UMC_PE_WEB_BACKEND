@@ -1,0 +1,18 @@
+# 테스트에서만 쓰는 설정입니다. src/main/resources/application.yaml 대신 이 값들이 쓰입니다.
+spring:
+  datasource:
+    # 개발용 MySQL 대신 메모리 위에 잠깐 만들어졌다 사라지는 H2를 씁니다. MODE=MySQL은 MySQL 문법을 흉내 내는 옵션입니다.
+    url: jdbc:h2:mem:umc_movie;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  jpa:
+    hibernate:
+      # 테스트마다 메모리 DB의 스키마를 새로 만들어 엔티티 매핑도 함께 검증합니다.
+      ddl-auto: create-drop
+    open-in-view: false
+
+# 이 값이 없으면 JwtUtil이 ${JWT_SECRET}을 찾지 못해 테스트가 시작도 못 합니다.
+jwt:
+  secret: test-secret-for-context-loading-only-32bytes!
+  access-expiration: 3600
