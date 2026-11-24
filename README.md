@@ -1,5 +1,101 @@
 # UMC 영화 평점 서비스 백엔드 (Spring Boot)
 
+## 9주차 — Swagger 문서화 · 단위/통합 테스트
+
+### 실행
+
+```bash
+JWT_SECRET=<32자 이상 비밀키> JWT_ACCESS_EXPIRATION=3600 ./gradlew bootRun
+# 문서 화면: http://localhost:8080/swagger-ui.html
+# OpenAPI JSON: http://localhost:8080/v3/api-docs
+
+./gradlew test   # MySQL·JWT 환경 변수 없이도 실행됩니다 (테스트는 H2 + src/test/resources/application.yaml)
+```
+
+### 1. Swagger 붙이기
+
+- `build.gradle`에 `springdoc-openapi-starter-webmvc-ui:2.8.9`를 추가했습니다.
+- `SwaggerConfig`에 문서 제목과 `bearerAuth`(HTTP Bearer, JWT) 인증 방식을 등록했습니다.
+- 인터셉터가 모든 경로를 잠그고 있어서 처음에는 문서 화면도 `AUTH401_2`로 막혔습니다. `WebConfig` 예외 목록에 `/swagger-ui.html`, `/swagger-ui/**`, `/v3/api-docs/**`를 추가했습니다. `/swagger-ui.html`은 `/swagger-ui/index.html`로 302 리다이렉트되므로 두 경로를 모두 열어야 합니다.
+- **`@LoginMember` 숨기기**: 워크북은 `@RequestAttribute`를 쓰지만, 이 프로젝트는 7주차에 만든 `@LoginMember Long memberId`를 씁니다. springdoc은 이 값을 `memberId` 쿼리 파라미터로 문서에 그립니다. 토큰에서 채워지는 값이라 `SpringDocUtils.getConfig().addAnnotationsToIgnore(LoginMember.class)`로 숨겼습니다.
+
+### 2. 문서화한 내용
+
+| API | 문서화 |
+| --- | --- |
+| `POST /members` | `@Tag("회원")`, `@Operation`, `SignUpRequest`의 `@Schema` 설명·예시 |
+| `POST /auth/login` | `@Tag("인증")`, `@Operation`, `LoginRequest`의 `@Schema` 설명·예시 |
+| `POST /favorites` | `@Tag("즐겨찾기")`, 클래스 단위 `@SecurityRequirement`, 201·401·409 응답 예시 (`@ApiResponses`는 공통 응답 DTO와 이름이 겹쳐 풀네임 사용) |
+
+자물쇠 표시는 인터셉터 공개 경로와 똑같이 맞췄습니다. 그래서 즐겨찾기 3개 외에 평점 쓰기, 영화 기록, 내 정보 API에도 `@SecurityRequirement`를 붙였습니다.
+
+| 자물쇠 있음 (토큰 필요) | 자물쇠 없음 (공개) |
+| --- | --- |
+| `/favorites/**`, `POST /ratings`, `PATCH·DELETE /ratings/{id}`, `POST /movie-records`, `GET·PATCH /members/me` | `POST /members`, `POST /auth/login`, `GET /members/{id}/ratings`, `GET /members/nickname·email/{v}` |
+
+Swagger에서 `POST /favorites`를 호출해 같은 요청의 결과가 `201 COMMON201` → `409 FAVORITE409_1`로 바뀌고, 토큰을 빼면 `401 AUTH401_2`가 나오는 것을 확인했습니다.
+
+### 3. 테스트
+
+| 종류 | 파일 | 테스트 |
+| --- | --- | --- |
+| 단위 (Mockito) | `service/FavoriteServiceTest` | 새 영화면 저장 / 중복이면 `FAVORITE409_1` 예외 + `save` 호출 안 함 |
+| 통합 (MockMvc + H2) | `controller/FavoriteApiTest` | 토큰 없음 401 / 등록 201 / 중복 409 / 여부 조회 `isFavorite: false` / `/v3/api-docs` 공개 |
+
+- 테스트 전용 `src/test/resources/application.yaml`에서 H2 메모리 DB(`MODE=MySQL`, `ddl-auto: create-drop`)와 JWT 값을 지정했습니다. 개발 DB를 건드리지 않고, 기존 `DemoApplicationTests`도 MySQL 없이 통과합니다.
+- 결과: `./gradlew test` → 8개 통과 (단위 2, 통합 5, 기존 1)
+
+### 4. 일부러 깨뜨리기
+
+`FavoriteService.create`의 중복 검사 `if` 블록을 주석 처리하자 3개가 실패했습니다. 되돌리자 다시 8개 모두 통과했습니다.
+
+| 실패한 테스트 | 오류 메시지 | 이유 |
+| --- | --- | --- |
+| 단위: 중복이면 예외 | `Expecting actual throwable to be an instance of: ApiException but was: NullPointerException` | 예외 없이 `save`까지 갔고, 가짜 `save`가 `null`을 돌려줘 `FavoriteResponse.from`에서 NPE가 났습니다. |
+| 단위: 새 영화면 저장 | `UnnecessaryStubbingException` | `existsBy...` 호출이 사라져, 미리 정해 둔 가짜 응답이 쓰이지 않았습니다. Mockito strict stubs가 이를 실패로 처리합니다. |
+| 통합: 중복이면 409 | `JSON path "$.code" expected:<FAVORITE409_1> but was:<COMMON4091>` | DB UNIQUE 제약이 막아 409는 나왔습니다. 하지만 `GlobalExceptionHandler`는 MySQL 메시지의 키 이름(`'favorite.uk_favorite_member_movie'`)으로 code를 고르는데, H2는 메시지 형식이 달라 기본 `COMMON4091`이 나왔습니다. |
+
+마지막 줄은 덤으로 얻은 발견입니다. 동시 요청 대비용 DB 제약 → code 변환은 MySQL 메시지에 기대고 있어서 H2 통합 테스트로는 검증되지 않습니다.
+
+### 5. 미션 — 문서 채우기 · 평점 API 테스트
+
+**문서화**: 모든 API에 `@Operation` 한 줄 설명을 넣었습니다. 토큰 필요 여부는 자물쇠(`@SecurityRequirement`)와 설명 첫 문장("토큰 필요." / "공개 API") 양쪽에 적었습니다. 실패 응답은 `@ApiResponses`에 **상태 코드와 `code`를 함께** 적었습니다.
+
+| API | 토큰 | 성공 | 실패 (상태 · code) |
+| --- | --- | --- | --- |
+| `POST /ratings` 평점 등록 | 필요 | 201 | 400 `COMMON4001`, 401, 404 `MEMBER404_1`, 409 `RATING409_1` |
+| `PATCH /ratings/{ratingId}` 평점 수정 | 필요 | 200 | 400 `COMMON4001`, 401, 403 `RATING403_1`, 404 `RATING404_1` |
+| `DELETE /ratings/{ratingId}` 평점 삭제 | 필요 | 200 | 401, 403 `RATING403_1`, 404 `RATING404_1` |
+| `GET /members/{memberId}/ratings` 유저별 평점 | 공개 | 200 (배열) | 404 `MEMBER404_1` |
+| `GET /members/me` 내 정보 조회 | 필요 | 200 | 401, 404 `MEMBER404_1` |
+| `PATCH /members/me` 내 정보 수정 | 필요 | 200 | 400 `COMMON4001`, 401, 404 `MEMBER404_1`, 409 `MEMBER409_1` |
+| `GET /favorites` 내 즐겨찾기 | 필요 | 200 | 401 |
+| `GET /favorites/{movieId}` 즐겨찾기 여부 | 필요 | 200 (`isFavorite`) | 401 |
+| `DELETE /favorites/{movieId}` 즐겨찾기 해제 | 필요 | 200 | 401, 404 `FAVORITE404_1` |
+
+401은 모두 `AUTH401_2`(토큰 없음) / `AUTH401_3`(유효하지 않음) / `AUTH401_4`(만료)로 적었습니다. 미션 범위 밖이지만 문서가 `200 OK`로 잘못 나오던 회원가입(201, 409 `MEMBER4091`·`MEMBER4092`), 로그인(401 `AUTH401_1`), 영화 기록(201, 409 `RATING409_1`·`FAVORITE409_1`)도 실제 응답에 맞췄습니다. 평점·내 정보 수정 요청 DTO에는 `@Schema` 예시 값을 넣었습니다.
+
+실패 응답에는 `content = @Content`를 붙였습니다. 비워 두면 springdoc이 성공 응답 스키마를 실패 응답에도 그려서, 실패해도 `RatingResponse`가 오는 것처럼 보이기 때문입니다.
+
+**평점 테스트**
+
+| 종류 | 테스트 이름 (`@DisplayName`) |
+| --- | --- |
+| 단위 `RatingServiceTest` | 이미 평점을 남긴 영화에 다시 평점을 등록하면 409 RATING409_1 예외를 던지고 저장하지 않는다 |
+| 단위 `RatingServiceTest` | 다른 회원의 평점을 수정하려 하면 403 RATING403_1 예외를 던지고 평점은 바뀌지 않는다 |
+| 통합 `RatingApiTest` | 토큰 없이 평점을 등록하면 401과 AUTH401_2를 응답하고 평점은 저장되지 않는다 |
+| 통합 `RatingApiTest` | 토큰을 담아 평점을 등록하면 201과 COMMON201, 저장된 영화 ID·별점을 응답한다 |
+
+- 단위 테스트는 예외 종류뿐 아니라 `status`(409/403)와 `code`까지 확인합니다. "저장하지 않았다", "평점이 바뀌지 않았다"도 함께 검증합니다.
+- 소유권 검사는 `memberId`를 비교하는데, 이 값은 원래 DB가 채워 줍니다. 단위 테스트에서는 `ReflectionTestUtils.setField`로 직접 넣었습니다.
+- 결과: `./gradlew test` → **12개 통과** (단위 4, 통합 7, 기존 1)
+
+### 그 외
+
+- 프론트를 Next.js(`localhost:3000`)로 옮기면서 CORS `allowedOrigins`에 `http://localhost:3000`을 추가했습니다.
+
+---
+
 ## 8주차 — 즐겨찾기 · 영화 기록 트랜잭션
 
 ### 실행 전 준비
