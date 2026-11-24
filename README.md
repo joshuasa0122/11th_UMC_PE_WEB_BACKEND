@@ -90,6 +90,190 @@ Swagger에서 `POST /favorites`를 호출해 같은 요청의 결과가 `201 COM
 - 소유권 검사는 `memberId`를 비교하는데, 이 값은 원래 DB가 채워 줍니다. 단위 테스트에서는 `ReflectionTestUtils.setField`로 직접 넣었습니다.
 - 결과: `./gradlew test` → **12개 통과** (단위 4, 통합 7, 기존 1)
 
+### 트러블 슈팅
+
+<details>
+<summary>펼치기</summary>
+
+#### ⚡ 이슈 No.1 — 서버 실행 시 `JWT_SECRET`을 찾지 못함
+
+**`이슈`**
+
+👉 `./gradlew bootRun`으로 서버를 켜자 바로 종료됐어요.
+
+```
+Caused by: org.springframework.beans.factory.BeanCreationException: Error creating bean with name 'jwtUtil' defined in file [.../build/classes/java/main/com/umc/movie/util/JwtUtil.class]: Unexpected exception during bean creation
+Caused by: org.springframework.util.PlaceholderResolutionException: Could not resolve placeholder 'JWT_SECRET' in value "${JWT_SECRET}" <-- "${jwt.secret}"
+BUILD FAILED in 7s
+```
+
+**`문제`**
+
+👉 7주차에 비밀키를 저장소에 올리지 않으려고 `application.yaml`에서 `jwt.secret: ${JWT_SECRET}`처럼 환경 변수를 참조하게 했어요. 이번에는 환경 변수 없이 서버를 켜서 `JwtUtil` Bean을 만들지 못했어요.
+
+**`해결`**
+
+👉 실행할 때 환경 변수를 함께 넘겼어요.
+
+```bash
+JWT_SECRET=$(openssl rand -hex 32) JWT_ACCESS_EXPIRATION=3600 ./gradlew bootRun
+```
+
+테스트는 매번 환경 변수를 넣지 않아도 되게 `src/test/resources/application.yaml`에 테스트 전용 `jwt.secret` 값을 적었어요.
+
+**`참고레퍼런스`**
+
+- Spring Boot - Externalized Configuration: https://docs.spring.io/spring-boot/reference/features/external-config.html
+
+---
+
+#### ⚡ 이슈 No.2 — Next.js 프론트에서 로그인하면 CORS로 막힘
+
+**`이슈`**
+
+👉 프론트를 Next.js로 옮긴 뒤 로그인하면 "서버와 통신하지 못했어요."가 표시됐어요. curl로 `POST /auth/login`을 보내면 성공했어요. 브라우저가 먼저 보내는 preflight를 같은 조건으로 보내 보니 403이었어요.
+
+```
+OPTIONS http://localhost:8080/auth/login
+Origin: http://localhost:3000
+Access-Control-Request-Method: POST
+→ 403
+```
+
+**`문제`**
+
+👉 `WebConfig`의 CORS 설정이 Vite 개발 서버 주소 `http://localhost:5173`만 허용하고 있었어요. Next.js 개발 서버는 `localhost:3000`이라 허용 목록에 없는 출처였어요.
+
+**`해결`**
+
+👉 `allowedOrigins`에 `http://localhost:3000`을 추가하고 서버를 다시 켰어요. preflight가 200으로 바뀌고 브라우저 로그인이 성공했어요.
+
+```java
+.allowedOrigins("http://localhost:5173", "http://localhost:3000")
+```
+
+테스트 코드는 이 문제를 잡지 못했어요. CORS는 브라우저가 거는 제약이라 MockMvc 요청에서는 생기지 않아요. 그래서 테스트가 초록불이어도 브라우저에서 한 번은 직접 확인해야 해요.
+
+**`참고레퍼런스`**
+
+- Spring Framework - CORS: https://docs.spring.io/spring-framework/reference/web/webmvc-cors.html
+- MDN - Preflight request: https://developer.mozilla.org/en-US/docs/Glossary/Preflight_request
+
+---
+
+#### ⚡ 이슈 No.3 — 통합 테스트에서 409인데 `code`가 `COMMON4091`
+
+**`이슈`**
+
+👉 실습 6에서 `FavoriteService`의 중복 검사를 주석 처리했어요. 상태 코드는 409로 그대로였는데, `code`가 예상과 달라 통합 테스트가 실패했어요.
+
+```
+java.lang.AssertionError: JSON path "$.code" expected:<FAVORITE409_1> but was:<COMMON4091>
+```
+
+**`문제`**
+
+👉 중복 검사가 빠져도 DB의 UNIQUE 제약이 두 번째 저장을 막아요. 그때 나는 `DataIntegrityViolationException`을 `GlobalExceptionHandler`가 code로 바꾸는데, **MySQL 오류 메시지의 키 이름**(`'favorite.uk_favorite_member_movie'`)으로 어떤 제약인지 구분해요. 테스트는 H2 메모리 DB를 쓰고, H2는 오류 메시지 형식이 MySQL과 달라요. 그래서 일치하는 조건이 없어 기본값 `COMMON4091`이 나왔어요.
+
+**`해결`**
+
+👉 중복 검사를 되돌려 테스트를 다시 통과시켰어요. 함께 알게 된 점이 있어요. 동시 요청 대비용 "DB 제약 위반 → code 변환"은 MySQL에 기대고 있어서 H2 통합 테스트로는 검증되지 않아요. 이 한계를 README와 PR에 기록했어요. 이 경로까지 검증하려면 실제 MySQL로 테스트하거나(예: Testcontainers), 메시지 대신 제약 이름을 꺼내 비교하는 방식으로 바꿔야 해요.
+
+**`참고레퍼런스`**
+
+- H2 Database - Compatibility: https://www.h2database.com/html/features.html#compatibility
+- Testcontainers - MySQL Module: https://java.testcontainers.org/modules/databases/mysql/
+
+---
+
+#### ⚡ 이슈 No.4 — 건드리지 않은 정상 케이스 단위 테스트까지 실패
+
+**`이슈`**
+
+👉 실습 6에서 중복 검사를 지웠을 때 "중복" 테스트만 실패할 줄 알았어요. 그런데 "아직 즐겨찾기하지 않은 영화면 저장한다" 테스트도 실패했어요.
+
+```
+org.mockito.exceptions.misusing.UnnecessaryStubbingException:
+Unnecessary stubbings detected.
+Clean & maintainable test code requires zero unnecessary code.
+Following stubbings are unnecessary (click to navigate to relevant line of code):
+  1. -> at com.umc.movie.service.FavoriteServiceTest.createFavorite(FavoriteServiceTest.java:49)
+Please remove unnecessary stubbings
+```
+
+**`문제`**
+
+👉 `@ExtendWith(MockitoExtension.class)`는 기본적으로 **strict stubs** 모드예요. 정상 케이스 테스트는 `given(favoriteRepository.existsBy...).willReturn(false)`로 가짜 응답을 정해 뒀어요. 그런데 중복 검사 코드가 사라져 이 메서드가 한 번도 호출되지 않았어요. Mockito는 쓰이지 않은 stub을 "테스트가 실제 코드와 어긋났다"는 신호로 보고 실패시켜요.
+
+**`해결`**
+
+👉 중복 검사를 되돌리자 stub이 다시 쓰여 통과했어요. 이 실패는 오히려 유용했어요. 결과값만 보면 정상 케이스는 통과할 수 있는데, strict stubs 덕분에 "중복 검사 호출이 사라졌다"는 사실까지 잡혔어요.
+
+**`참고레퍼런스`**
+
+- Mockito - UnnecessaryStubbingException: https://javadoc.io/doc/org.mockito/mockito-core/latest/org/mockito/exceptions/misusing/UnnecessaryStubbingException.html
+- Mockito - Strictness: https://javadoc.io/doc/org.mockito/mockito-core/latest/org/mockito/quality/Strictness.html
+
+---
+
+#### ⚡ 이슈 No.5 — `./gradlew test`가 0.3초 만에 끝나고 테스트 결과가 안 보임
+
+**`이슈`**
+
+👉 테스트 통과 화면을 캡처하려고 실행했는데, PASSED 줄 없이 바로 끝났어요.
+
+```
+$ ./gradlew test --console=plain -i | grep -E "PASSED|FAILED|BUILD"
+BUILD SUCCESSFUL in 372ms
+```
+
+**`문제`**
+
+👉 Gradle은 입력(소스·의존성)이 바뀌지 않으면 이전 결과를 재사용하고 태스크를 건너뛰어요(UP-TO-DATE). 직전에 이미 같은 코드로 테스트를 돌렸기 때문에, 실제로는 테스트가 한 개도 실행되지 않았어요.
+
+**`해결`**
+
+👉 이전 결과를 지우고 다시 실행했어요. 그다음 HTML 리포트로 결과를 확인했어요.
+
+```bash
+./gradlew cleanTest test
+open build/reports/tests/test/index.html
+```
+
+리포트에서 테스트 개수, 실패 수, 클래스별 결과를 한 화면에 확인했어요.
+
+**`참고레퍼런스`**
+
+- Gradle - Incremental build: https://docs.gradle.org/current/userguide/incremental_build.html
+- Gradle - Testing in Java & JVM projects: https://docs.gradle.org/current/userguide/java_testing.html
+
+---
+
+#### ⚡ 이슈 No.6 — VS Code에 빨간 줄이 뜨는데 빌드는 성공
+
+**`이슈`**
+
+👉 Swagger 의존성과 테스트를 추가하자 VS Code에 오류가 표시됐어요. 하지만 `./gradlew test`는 성공했어요.
+
+```
+SwaggerConfig.java: The import io.swagger cannot be resolved
+FavoriteServiceTest.java: The constructor CreateFavoriteRequest(long) is undefined
+```
+
+**`문제`**
+
+👉 VS Code Java 확장은 Gradle과 별도로 프로젝트를 분석해요. `build.gradle`에 의존성을 추가해도 확장이 프로젝트 설정을 다시 읽기 전까지는 새 라이브러리를 모르고, Lombok·record 같은 정보도 늦게 반영돼요. 실제 컴파일러(Gradle)는 문제가 없었어요.
+
+**`해결`**
+
+👉 실제 상태는 `./gradlew compileJava` / `./gradlew test` 결과로 판단했어요. VS Code 표시는 명령 팔레트의 `Java: Reload Projects`(또는 `Java: Clean Java Language Server Workspace`)로 갱신하면 돼요. IntelliJ라면 코끼리 아이콘(Gradle 새로고침)이 같은 역할이에요.
+
+**`참고레퍼런스`**
+
+- VS Code - Java build tools: https://code.visualstudio.com/docs/java/java-build
+
+</details>
+
 ### 그 외
 
 - 프론트를 Next.js(`localhost:3000`)로 옮기면서 CORS `allowedOrigins`에 `http://localhost:3000`을 추가했습니다.
